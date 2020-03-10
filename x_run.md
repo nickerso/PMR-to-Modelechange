@@ -1,4 +1,4 @@
-```shell
+```console
 $ python pmr_mx_fmt.py https://models.physiomeproject.org/e/
 <database>
   <name>Physiome Model Repository</name>
