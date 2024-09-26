@@ -1,5 +1,19 @@
 import json
 from urllib.request import Request, urlopen
+import sqlite3
+
+PMR_INSTANCES = {
+    "models": "https://models.physiomeproject.org/",
+    "staging": "https://staging.physiomeproject.org/",
+    "teaching": "https://teaching.physiomeproject.org/"
+}
+
+CACHE_SCHEMA = """
+    begin;
+    create table exposures (uri text primary key, created timestamp);
+    create table exposure_details (exposure text, details text);
+    commit;
+"""
 
 tmpl = '''<database>
   <name>Physiome Model Repository</name>
@@ -52,15 +66,16 @@ def convert(stream):
     for entry in collection_links:
         url = entry['href']
         # id is being used to construct URL on modeleXchange, so needs to be non-path?
-        path = url.replace('https://staging.physiomeproject.org/','')
+        path = url.replace('https://staging.physiomeproject.org/', '')
+        path = path.replace('https://models.physiomeproject.org/', '')
         id = path.replace('/','__')
         raw_name = (entry['prompt'] or 'This model has no name').strip()
         # likely more special characters that might need to be handled?
         name = raw_name.replace('&', '&amp;')
-        req = Request(url)
-        req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
-        #stream = urlopen(req)
-        #entry_data = json.load(stream)
+        # req = Request(url)
+        # req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
+        # stream = urlopen(req)
+        # entry_data = json.load(stream)
         entries.append(entry_tmpl.format(
             entry_id = id,
             entry_url = url,
@@ -80,9 +95,21 @@ if __name__ == '__main__':
     import sys
     from os.path import isfile
 
-    if len(sys.argv) < 2:
-        sys.stderr.write('usage: %s <url>\n' % sys.argv[0])
+    if len(sys.argv) < 3:
+        sys.stderr.write('usage: %s <models | staging | teaching> <cache file>\n' % sys.argv[0])
         exit(1)
+
+    base_url = PMR_INSTANCES[sys.argv[1]]
+    print('base url = ', base_url)
+
+    cache_file = sys.argv[2]
+
+    db = None
+    if not isfile(cache_file):
+        db = sqlite3.connect(cache_file, detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)
+        db.executescript(CACHE_SCHEMA)
+    else:
+        db = sqlite3.connect(cache_file, detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)
 
     if isfile(sys.argv[1]):
         stream = open(sys.argv[1])
