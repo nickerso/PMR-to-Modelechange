@@ -14,6 +14,23 @@ PMR_INSTANCES = {
 }
 
 
+def _request_json(url, debug_print=None):
+    req = Request(url)
+    req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
+    req.add_header('User-Agent', 'andre.pmr-utils/0.0')
+    data = None
+    try:
+        stream = urlopen(req)
+        data = json.load(stream)
+        if debug_print:
+            print(f'{debug_print} [get JSON request]: {url}')
+            print(json.dumps(data, indent=debug_print))
+    except:
+        print(f"Requested URL did not return JSON: {url}")
+
+    return data
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(prog="workspaces")
     parser.add_argument("--instance", help="PMR instance to work with.",
@@ -30,50 +47,64 @@ def _parse_args():
 
 def get_workspace_list(instance, regex):
     workspace_root = instance + "workspace"
-    req = Request(workspace_root)
-    req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
-    stream = urlopen(req)
-    data = json.load(stream)
+    data = _request_json(workspace_root)
     collection_links = data['collection']['links']
     entry_count = len(collection_links)
     print(f"Total number of workspaces: {entry_count}")
-    workspaces = []
+    workspace_list = []
     for entry in collection_links:
         if (not regex) or re.match(regex, entry['href']):
-            workspaces.append(entry['href'])
-    return workspaces
+            workspace_list.append(entry['href'])
+    return workspace_list
 
 
-def list_workspaces(workspaces):
+def list_link(link, follow):
+    href = link['href']
+    prompt = link['prompt']
+    rel = link['rel']
+    print(f'Link({rel}): {href}; {prompt}')
+    if rel == follow:
+        data = _request_json(href)
+        print(json.dumps(data, indent=2))
+        if 'links' in data['collection']:
+            for l in data['collection']['links']: list_link(l, follow)
+    if rel == 'section':
+        data = _request_json(href)
+        print(json.dumps(data, indent=5))
 
-    for w in workspaces:
-        print(f"Workspace: {w}")
-        url = w + "/workspace_view"
-        req = Request(url)
-        req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
-        stream = urlopen(req)
-        data = json.load(stream)
-        print(json.dumps(data, indent=3))
-    # entry = collection_links[154]
-    # print(entry)
-    # url = entry['href']
-    # req = Request(url)
-    # req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
-    # stream = urlopen(req)
-    # data = json.load(stream)
-    # print(json.dumps(data, indent=3))
-    # entry = collection_links[908]
-    # print(entry)
-    # url = entry['href']
-    # req = Request(url)
-    # req.add_header('Accept', 'application/vnd.physiome.pmr2.json.1')
-    # stream = urlopen(req)
-    # data = json.load(stream)
-    # print(json.dumps(data, indent=3))
-    # entries = []
-    # for entry in collection_links:
-    #     url = entry['href']
-    #     #print(url)
+
+def list_exposure(exposure_url):
+    print(f'Exposure: {exposure_url}')
+    exposure ={
+        'href': exposure_url
+    }
+    data = _request_json(exposure_url, 2)
+    exposure_info = data['collection']['items'][0]
+    exposure_data = exposure_info['data']
+    for d in exposure_data:
+        exposure[d['name']] = d['value']
+    return exposure
+
+def list_workspace(workspace_url):
+    print(f"Workspace: {workspace_url}")
+    url = workspace_url + "/workspace_view"
+    data = _request_json(url)
+    workspace_info = data['collection']['items'][0]
+    workspace = {
+        'href': workspace_info['href']
+    }
+    workspace_data = workspace_info['data']
+    for d in workspace_data:
+        workspace[d['name']] = d['value']
+    if 'links' in workspace_info:
+        links = workspace_info['links']
+        # we only care about the latest exposure, if exists
+        for link in links:
+            if link['prompt'] == 'Latest Exposure':
+                workspace['latest-exposure'] = list_exposure(link['href'])
+            else:
+                print(f'[list_workspace] Unknown link found and ignored: {link['prompt']}')
+    print(json.dumps(workspace, indent=3))
 
 
 def update_workspaces(instance, workspaces, root):
@@ -106,7 +137,9 @@ if __name__ == "__main__":
     workspaces = get_workspace_list(pmr_instance, args.regex)
     print(f"Retrieved {len(workspaces)} workspace(s) from this PMR instance that match the regex: {args.regex}")
     if args.action == 'list':
-        list_workspaces(workspaces)
+        for w in workspaces:
+            list_workspace(w)
+
     elif args.action == 'update':
         update_workspaces(pmr_instance, workspaces, args.cache)
 
