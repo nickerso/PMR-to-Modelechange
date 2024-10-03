@@ -40,21 +40,34 @@ def _parse_args():
                         help="the action to perform with this instance of PMR.")
     parser.add_argument("--cache", default="pmr-cache",
                         help="Path to the folder to store the local PMR cache in.")
-    parser.add_argument("--regex",
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--regex",
                         help='Specify a regex to use in applying the given action to matching workspaces')
+    group.add_argument("-w", "--workspace",
+                        help='Specify a single workspace rather than searching PMR')
     return parser.parse_args()
 
 
-def get_workspace_list(instance, regex):
-    workspace_root = instance + "workspace"
-    data = _request_json(workspace_root)
-    collection_links = data['collection']['links']
-    entry_count = len(collection_links)
-    print(f"Total number of workspaces: {entry_count}")
+def get_workspace_list(instance, regex, workspace):
     workspace_list = []
-    for entry in collection_links:
-        if (not regex) or re.match(regex, entry['href']):
-            workspace_list.append(entry['href'])
+    if workspace:
+        # user has given a single workspace to use, check its for this instance of PMR
+        if not workspace.startswith(instance):
+            print(f'The requested workspace, {workspace}, is not from this instance of PMR ({instance}).')
+            return workspace_list
+        workspace_list.append(workspace)
+    else:
+        # fetch workspaces from the requested instance
+        workspace_root = instance + "workspace"
+        data = _request_json(workspace_root)
+        collection_links = data['collection']['links']
+        entry_count = len(collection_links)
+        print(f"Total number of workspaces retrieved: {entry_count}")
+        workspace_list = []
+        for entry in collection_links:
+            if (not regex) or re.match(regex, entry['href']):
+                workspace_list.append(entry['href'])
+        print(f"Retrieved {len(workspaces)} workspace(s) from this PMR instance that match the regex: {args.regex}")
     return workspace_list
 
 
@@ -134,8 +147,7 @@ if __name__ == "__main__":
 
     pmr_instance = PMR_INSTANCES[args.instance]
     print(f"PMR Instance: {pmr_instance}")
-    workspaces = get_workspace_list(pmr_instance, args.regex)
-    print(f"Retrieved {len(workspaces)} workspace(s) from this PMR instance that match the regex: {args.regex}")
+    workspaces = get_workspace_list(pmr_instance, args.regex, args.workspace)
     if args.action == 'list':
         for w in workspaces:
             list_workspace(w)
