@@ -13,6 +13,23 @@ PMR_INSTANCES = {
     'staging': 'https://staging.physiomeproject.org/',
 }
 
+KNOWN_PROMPTS = [
+    'Model Metadata',
+    'Launch with OpenCOR',
+    'Semantic Metadata',
+    'COMBINE Archive',
+    'Source View',
+    'Cite this model',
+    'Generated Code',
+    'Mathematics',
+    'Documentation'
+]
+
+KNOWN_RELS = [
+    'bookmark',
+    'section',
+    'via'
+]
 
 def _request_json(url, debug_print=None):
     req = Request(url)
@@ -40,15 +57,17 @@ def _parse_args():
                         help="the action to perform with this instance of PMR.")
     parser.add_argument("--cache", default="pmr-cache",
                         help="Path to the folder to store the local PMR cache in.")
-    group = parser.add_mutually_exclusive_group()
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--regex",
                         help='Specify a regex to use in applying the given action to matching workspaces')
-    group.add_argument("-w", "--workspace",
+    group.add_argument("--workspace",
                         help='Specify a single workspace rather than searching PMR')
+    group.add_argument("--all", action='store_true', default=False,
+                        help='Iterate over all available (public) content in PMR')
     return parser.parse_args()
 
 
-def get_workspace_list(instance, regex, workspace):
+def get_workspace_list(instance, regex, workspace, all):
     workspace_list = []
     if workspace:
         # user has given a single workspace to use, check its for this instance of PMR
@@ -56,7 +75,7 @@ def get_workspace_list(instance, regex, workspace):
             print(f'The requested workspace, {workspace}, is not from this instance of PMR ({instance}).')
             return workspace_list
         workspace_list.append(workspace)
-    else:
+    elif regex or all:
         # fetch workspaces from the requested instance
         workspace_root = instance + "workspace"
         data = _request_json(workspace_root)
@@ -67,36 +86,60 @@ def get_workspace_list(instance, regex, workspace):
         for entry in collection_links:
             if (not regex) or re.match(regex, entry['href']):
                 workspace_list.append(entry['href'])
-        print(f"Retrieved {len(workspaces)} workspace(s) from this PMR instance that match the regex: {args.regex}")
+        print(f"Retrieved {len(workspace_list)} workspace(s) from this PMR instance that match the regex: {regex}")
     return workspace_list
 
 
-def list_link(link, follow):
+def list_link(link, follow=None):
     href = link['href']
     prompt = link['prompt']
     rel = link['rel']
-    print(f'Link({rel}): {href}; {prompt}')
-    if rel == follow:
+    link_desc = {
+        'href': href,
+        'prompt': prompt,
+        'relationship': rel
+    }
+    if not ((rel in KNOWN_RELS) and (prompt in KNOWN_PROMPTS)):
+        # maybe something we haven't seen before?
+        print(f'Link({rel}): {href}; {prompt}')
+    if follow and rel == follow:
         data = _request_json(href)
-        print(json.dumps(data, indent=2))
+        link_info = data['collection']['items'][0]
+        link_data = link_info['data']
+        for d in link_data:
+            link_desc[d['name']] = d['value']
         if 'links' in data['collection']:
-            for l in data['collection']['links']: list_link(l, follow)
+            link_links = data['collection']['links']
+            link_desc['links'] = []
+            for l in link_links:
+                link_desc['links'].append(list_link(l, follow))
     if rel == 'section':
-        data = _request_json(href)
-        print(json.dumps(data, indent=5))
+        if prompt == 'Model Metadata':
+            data = _request_json(href)
+            mm_data = data['collection']['items'][0]['data']
+            mm = {}
+            for d in mm_data:
+                mm[d['name']] = d['value']
+            link_desc['model_metadata'] = mm
+    return link_desc
 
 
 def list_exposure(exposure_url):
     print(f'Exposure: {exposure_url}')
-    exposure ={
+    exposure = {
         'href': exposure_url
     }
-    data = _request_json(exposure_url, 2)
+    data = _request_json(exposure_url)
     exposure_info = data['collection']['items'][0]
     exposure_data = exposure_info['data']
     for d in exposure_data:
         exposure[d['name']] = d['value']
+    exposure_links = data['collection']['links']
+    exposure['links'] = []
+    for l in exposure_links:
+        exposure['links'].append(list_link(l, follow='bookmark'))
     return exposure
+
 
 def list_workspace(workspace_url):
     print(f"Workspace: {workspace_url}")
@@ -117,21 +160,10 @@ def list_workspace(workspace_url):
                 workspace['latest-exposure'] = list_exposure(link['href'])
             else:
                 print(f'[list_workspace] Unknown link found and ignored: {link['prompt']}')
-    print(json.dumps(workspace, indent=3))
+    return workspace
 
 
-def update_workspaces(instance, workspaces, root):
-    print(f"Updating the local cache: {root}")
-    cache_root = pathlib.Path(root)
-    cache_root.mkdir(parents=True, exist_ok=True)
-    cache_instance_file = cache_root / ".instance"
-    if cache_instance_file.is_file():
-        cache_instance = cache_instance_file.read_text()
-        if cache_instance != instance:
-            print(f"Your local PMR cache originates from {cache_instance}, but {instance} was requested")
-            return
-    else:
-        cache_instance_file.write_text(instance)
+def update_workspaces(workspaces, cache_root):
     for w in workspaces:
         path = pathlib.Path(urlparse(w).path)
         workspace = path.name
@@ -142,18 +174,47 @@ def update_workspaces(instance, workspaces, root):
         else:
             repo = Repo.clone_from(w, workspace_cache)
 
+
+def check_cache(instance, root):
+    print(f"Updating the local cache: {root}")
+    cache_root = pathlib.Path(root)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_instance_file = cache_root / ".instance"
+    if cache_instance_file.is_file():
+        cache_instance = cache_instance_file.read_text()
+        if cache_instance != instance:
+            print(f"Your local PMR cache originates from {cache_instance}, but {instance} was requested")
+            return None
+    else:
+        cache_instance_file.write_text(instance)
+    return cache_root
+
+
 if __name__ == "__main__":
     args = _parse_args()
-
     pmr_instance = PMR_INSTANCES[args.instance]
-    print(f"PMR Instance: {pmr_instance}")
-    workspaces = get_workspace_list(pmr_instance, args.regex, args.workspace)
-    if args.action == 'list':
-        for w in workspaces:
-            list_workspace(w)
+    cache_root = check_cache(pmr_instance, args.cache)
+    if not cache_root:
+        print(f'Error with local cache')
+        exit(-2)
 
-    elif args.action == 'update':
-        update_workspaces(pmr_instance, workspaces, args.cache)
+    print(f"PMR Instance: {pmr_instance}")
+    workspaces = get_workspace_list(pmr_instance, args.regex, args.workspace, args.all)
+    if len(workspaces) > 0:
+        if args.action == 'list':
+            list_cache = cache_root / 'workspace_list.json'
+            workspace_descriptions = []
+            for w in workspaces:
+                desc = list_workspace(w)
+                workspace_descriptions.append(desc)
+            with open(list_cache, 'w') as f:
+                json.dump(workspace_descriptions, f, indent=2)
+        elif args.action == 'update':
+            update_workspaces(workspaces, cache_root)
+
+    else:
+        print(f'No requested workspaces found, perhaps you are looking for a workspace that is not public?')
+        exit(-1)
 
     # url = 'https://staging.physiomeproject.org/workspace'
     # print(url)
