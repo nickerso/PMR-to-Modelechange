@@ -102,7 +102,7 @@ def list_link(link, follow=None):
     if not ((rel in KNOWN_RELS) and (prompt in KNOWN_PROMPTS)):
         # maybe something we haven't seen before?
         print(f'Link({rel}): {href}; {prompt}')
-    if follow and rel == follow:
+    if follow and rel == follow and href.startswith("https://models.physiomeproject.org/"):
         data = _request_json(href)
         link_info = data['collection']['items'][0]
         link_data = link_info['data']
@@ -203,10 +203,14 @@ if __name__ == "__main__":
     if len(workspaces) > 0:
         if args.action == 'list':
             list_cache = cache_root / 'workspace_list.json'
+            list_cache_incremental = cache_root / 'workspace_list_inc.json'
             workspace_descriptions = []
             for w in workspaces:
                 desc = list_workspace(w)
                 workspace_descriptions.append(desc)
+                with open(list_cache_incremental, 'w') as f:
+                    json.dump(workspace_descriptions, f, indent=2)
+
             with open(list_cache, 'w') as f:
                 json.dump(workspace_descriptions, f, indent=2)
         elif args.action == 'update':
