@@ -72,9 +72,10 @@ for ft in filetype_set:
 
 combined_text = " ".join(keywords)
 # Generate a word cloud
-wordcloud = WordCloud(width=1024, height=768, background_color='black', colormap='rainbow').generate(combined_text)
+wordcloud = WordCloud(width=1600, height=1200, background_color='black', colormap='rainbow').generate(combined_text)
 # Display the word cloud
-plt.figure(figsize=(10, 5))
+plt.figure(figsize=(10, 8))
 plt.imshow(wordcloud, interpolation='bilinear')
 plt.axis('off')
+plt.savefig("keyword-wordcloud.png", dpi=300, bbox_inches='tight', transparent=True)
 plt.show()
